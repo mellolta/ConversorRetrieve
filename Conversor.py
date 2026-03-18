@@ -261,7 +261,7 @@ class ExportaTabelaMDB():
                 valores_formatados.append(f"'{v}'")
             # Prioridade 3: Datas no formato que você já validou
             elif isinstance(valor, (datetime, pd.Timestamp)):
-                valores_formatados.append(f'#{valor.strftime("%Y-%m-%d %H:%M:%S")}#')
+                valores_formatados.append(f'#{valor.strftime("%Y-%m-%d %H:%M")}#')
             else:
                 valores_formatados.append(str(valor))
                 
