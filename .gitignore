@@ -1,0 +1,27 @@
+# Ignorar arquivos de bloqueio do Access
+*.ldb
+*.laccdb
+
+# Ambiente Virtual (Python)
+.venv/
+venv/
+env/
+bin/
+lib64/
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Configurações sensíveis (IMPORTANTE)
+.streamlit/secrets.toml
+Historico.txt
+
+# Pastas de dados locais e backups
+csv/
+bkp/
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
