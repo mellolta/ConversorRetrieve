@@ -473,13 +473,149 @@ class ExportaTabelaMDB():
         return relacaoID
 
     #< ------------------------------------------------------------------------------------------------------------------------------
+    def exporta_dados_Linux_v2(self):
+        """ Versão Linux com transações explícitas """
+        import subprocess
+        import tempfile
+        import os
+        
+        print(f"\n=== INICIANDO EXPORTAÇÃO LINUX V2 ===")
+        print(f"Tabela: {self.table_name}")
+        print(f"Registros a processar: {len(self.table_data)}")
+        
+        # Pega o último ID
+        idmax = self.ultimoRegistro_Linux()
+        print(f"ID máximo atual: {idmax}")
+        
+        cont = idmax
+        relacaoID = {}
+        registros_para_inserir = []
+        
+        # Filtra registros (mesmo código de antes)
+        if self.table_name in Tabelas.codigo_coluna_6:
+            for i, row in enumerate(self.table_data):
+                if row[5] in self.codigoLista:
+                    antigoID = row[0]
+                    relacaoID.update({antigoID: cont})
+                    row_list = list(row)
+                    row_list[0] = cont
+                    registros_para_inserir.append(row_list)
+                    cont += 1
+            print(f"Registros filtrados: {len(registros_para_inserir)}")
+        
+        elif self.table_name in Tabelas.relacionadas:
+            for i, row in enumerate(self.table_data):
+                if row[0] in list(self.rids.keys()):
+                    row_list = list(row)
+                    row_list[0] = self.rids[row_list[0]]
+                    registros_para_inserir.append(row_list)
+            print(f"Registros filtrados: {len(registros_para_inserir)}")
+        
+        elif self.table_name in Tabelas.codigo_coluna_18:
+            for i, row in enumerate(self.table_data):
+                if row[17] in self.codigoLista:
+                    row_list = list(row)
+                    row_list[0] = cont
+                    registros_para_inserir.append(row_list)
+                    cont += 1
+            print(f"Registros filtrados: {len(registros_para_inserir)}")
+        
+        elif self.table_name in Tabelas.sem_codigo:
+            for i, row in enumerate(self.table_data):
+                row_list = list(row)
+                row_list[0] = cont
+                registros_para_inserir.append(row_list)
+                cont += 1
+            print(f"Registros filtrados: {len(registros_para_inserir)}")
+        
+        if not registros_para_inserir:
+            print("Nenhum registro para inserir!")
+            return relacaoID
+        
+        # Cria arquivo SQL com transações
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False, encoding='utf-8') as tmp:
+            sql_file = tmp.name
+            
+            # Inicia transação
+            tmp.write("BEGIN TRANSACTION;\n")
+            
+            # Gera INSERTs
+            for row in registros_para_inserir:
+                # Pega nomes das colunas (usando col0, col1, etc. como fallback)
+                col_names = [f"col{i}" for i in range(len(row))]
+                
+                valores = []
+                for valor in row:
+                    if pd.isnull(valor):
+                        valores.append("NULL")
+                    elif isinstance(valor, str):
+                        v = valor.replace("'", "''")
+                        valores.append(f"'{v}'")
+                    elif isinstance(valor, (datetime, pd.Timestamp)):
+                        valores.append(f"'{valor.strftime('%Y-%m-%d %H:%M:%S')}'")
+                    else:
+                        valores.append(str(valor))
+                
+                insert_sql = f"INSERT INTO {self.table_name} ({', '.join(col_names)}) VALUES ({', '.join(valores)});\n"
+                tmp.write(insert_sql)
+            
+            # Atualiza Identificadores se necessário
+            if cont > idmax:
+                tmp.write(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax};\n")
+            
+            # Finaliza transação
+            tmp.write("COMMIT;\n")
+        
+        print(f"Arquivo SQL criado: {sql_file}")
+        print(f"Total de INSERTs: {len(registros_para_inserir)}")
+        
+        # Executa o SQL
+        try:
+            # Primeira tentativa: mdb-sql com arquivo
+            cmd = ['mdb-sql', '-i', sql_file, self.path_mdb]
+            print(f"Executando: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True
+            )
+            
+            print(f"Return code: {result.returncode}")
+            if result.stderr:
+                print(f"stderr: {result.stderr[:500]}")
+            
+            if result.returncode == 0:
+                print(f"✅ Tabela {self.table_name} inserida com sucesso!")
+                
+                # Verifica se os dados foram realmente inseridos
+                verify = subprocess.run(
+                    ['mdb-export', self.path_mdb, self.table_name],
+                    capture_output=True, text=True
+                )
+                if verify.stdout:
+                    linhas = verify.stdout.strip().split('\n')
+                    print(f"📊 Tabela agora tem {len(linhas)} linhas")
+                else:
+                    print("⚠️ Tabela parece vazia após inserção")
+            else:
+                print(f"❌ Falha ao inserir tabela {self.table_name}")
+                
+        except Exception as e:
+            print(f"Erro: {e}")
+        finally:
+            os.unlink(sql_file)
+        
+        return relacaoID
+
+    #< ------------------------------------------------------------------------------------------------------------------------------
     # MÉTODO PRINCIPAL
     #< ------------------------------------------------------------------------------------------------------------------------------
     def exporta_dados_MDB(self):
         if self.platform == 'Windows':
             return self.exporta_dados_Windows()
         else:
-            return self.exporta_dados_Linux()
+            # return self.exporta_dados_Linux()
+            return self.exporta_dados_Linux_v2()
         
 #< ------------------------------------------------------------------------------------------------------------------------------
 # MAIN
