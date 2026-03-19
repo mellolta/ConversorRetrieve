@@ -14,6 +14,7 @@ import numpy as np
 import pyodbc
 from datetime import datetime
 import os
+import platform
 
 #< ------------------------------------------------------------------------------------------------------------------------------
 def processar_dados_pcd(arquivo_csv, nome_arquivo):
@@ -219,326 +220,246 @@ class ExportaTabelaMDB():
         self.table_data = table_data
         self.codigoLista = codigoLista
         self.rids = rids
+        self.platform = platform.system()
 
     #< ------------------------------------------------------------------------------------------------------------------------------
-    # def conectaMDB(self) -> pyodbc.Connection:
-    #     """ Conecta com o MDB local
-    #         - cria a conexão
-    #     """
-    #     #- Endereço de conexão 
-    #     con_string = ''.join(["DRIVER={Microsoft Access Driver (*.mdb, *.accdb)}; DBQ=",self.path_mdb])
-
-    #     #- Criando a conexão
-    #     conn = pyodbc.connect(con_string)
-    #     # print("-----\nConnected to Local Database\n-----")  #! print
-
-    #     return conn
-    
-    # def conectaMDB(self) -> pyodbc.Connection:
-    #     """ Conecta com o MDB local adaptado para Windows ou Linux """
-    #     import platform
-        
-    #     if platform.system() == 'Windows':
-    #         driver = "{Microsoft Access Driver (*.mdb, *.accdb)}"
-    #     else:
-    #         # No Linux (Streamlit Cloud), o driver instalado pelo odbc-mdbtools 
-    #         # geralmente é registrado com este nome exato:
-    #         driver = "MDBTools"
-            
-    #     con_string = f"Driver={driver};DBQ={self.path_mdb};"
-    #     return pyodbc.connect(con_string)
-    
-    def conectaMDB(self) -> pyodbc.Connection:
-        """ Conecta com o MDB local adaptado para Windows ou Linux """
-        import platform
-        import os
-        
-        if platform.system() == 'Windows':
-            driver = "{Microsoft Access Driver (*.mdb, *.accdb)}"
-            con_string = f"Driver={driver};DBQ={self.path_mdb};"
-        else:
-            # Linux: usa caminho absoluto do driver
-            driver_path = "/usr/lib/x86_64-linux-gnu/odbc/libmdbodbc.so"
-            
-            # Verificar se o driver existe
-            if not os.path.exists(driver_path):
-                # Tenta alternativas
-                alternatives = [
-                    "/usr/lib/libmdbodbc.so",
-                    "/usr/lib/x86_64-linux-gnu/libmdbodbc.so"
-                ]
-                for alt in alternatives:
-                    if os.path.exists(alt):
-                        driver_path = alt
-                        break
-                else:
-                    # Se não encontrar, lista diretórios para debug
-                    print("Driver não encontrado. Verificando diretórios:")
-                    for d in ["/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu/odbc"]:
-                        if os.path.exists(d):
-                            print(f"Conteúdo de {d}:")
-                            try:
-                                print(os.listdir(d))
-                            except:
-                                pass
-                    raise Exception("Driver MDBTools não encontrado no sistema!")
-            
-            print(f"Usando driver em: {driver_path}")
-            con_string = f"Driver={driver_path};DBQ={self.path_mdb};"
-        
+    # MÉTODOS WINDOWS (com pyodbc)
+    #< ------------------------------------------------------------------------------------------------------------------------------
+    def conectaMDB_Windows(self) -> pyodbc.Connection:
+        """ Conecta com o MDB local no Windows """
+        con_string = f"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={self.path_mdb};"
         return pyodbc.connect(con_string)
-
-    #< ------------------------------------------------------------------------------------------------------------------------------
-    # def querypadrao(self, row, sql: str):
-    #     valores_formatados = []
-    #     for valor in row:
-    #         # Prioridade 1: Tratar nulos reais (None e NaN)
-    #         if pd.isnull(valor): 
-    #             valores_formatados.append("null")
-    #         # Prioridade 2: Strings com escape de aspas
-    #         elif isinstance(valor, str):
-    #             v = valor.replace("'", " ")
-    #             valores_formatados.append(f"'{v}'")
-    #         # Prioridade 3: Datas no formato que você já validou
-    #         elif isinstance(valor, (datetime, pd.Timestamp)):
-    #             valores_formatados.append(f'#{valor.strftime("%Y-%m-%d %H:%M")}#')
-    #         else:
-    #             valores_formatados.append(str(valor))
-                
-    #     sql = sql + ", ".join(valores_formatados) + ")"
-    #     # Garantia final para qualquer "None" que tenha escapado como string
-    #     return sql.replace('None', 'null')
-
-    def querypadrao(self, row, sql: str):
-        import platform
-        
+    
+    def ultimoRegistro_Windows(self, cursor):
+        query = 'SELECT Max(RegistroID) AS ID FROM Identificadores;'
+        cursor.execute(query)
+        idmax = cursor.fetchall()
+        return idmax[0][0]
+    
+    def querypadrao_windows(self, row, sql):
+        """ Versão Windows da query """
         valores_formatados = []
-        
         for valor in row:
-            if pd.isnull(valor):
-                # Linux (MDBTools) prefere NULL, Windows aceita null
-                if platform.system() == 'Windows':
-                    valores_formatados.append("null")
-                else:
-                    valores_formatados.append("NULL")
-                    
+            if pd.isnull(valor): 
+                valores_formatados.append("null")
             elif isinstance(valor, str):
                 v = valor.replace("'", " ")
                 valores_formatados.append(f"'{v}'")
-                
             elif isinstance(valor, (datetime, pd.Timestamp)):
-                # Mantém exatamente o formato original que funcionava
-                data_str = valor.strftime("%Y-%m-%d %H:%M")
-                
-                if platform.system() == 'Windows':
-                    # Windows Access: formato com #
-                    valores_formatados.append(f'#{data_str}#')
-                else:
-                    # Linux MDBTools: pode precisar de aspas
-                    valores_formatados.append(f"'{data_str}'")
-                    
+                valores_formatados.append(f'#{valor.strftime("%Y-%m-%d %H:%M")}#')
             else:
                 valores_formatados.append(str(valor))
         
-        # Para Linux, garantir NULL em maiúsculo
-        sql_final = sql + ", ".join(valores_formatados) + ")"
-        
-        if platform.system() != 'Windows':
-            sql_final = sql_final.replace('null', 'NULL')
-            sql_final = sql_final.replace('None', 'NULL')
-        
-        return sql_final
+        return sql + ", ".join(valores_formatados) + ")"
     
-    #< ------------------------------------------------------------------------------------------------------------------------------
-    # def ultimoRegistro(self, cursor:pyodbc.Connection):
-    #     #- Buscando o valor do RegistroID
-    #     query = 'SELECT Max(RegistroID) AS ID FROM Identificadores;'
-    #     cursor.execute(query)
-    #     idmax = cursor.fetchall()
-    #     idmax = idmax[0][0]
-    #     cont = idmax
-    #     # print("Último RegistroID: ",cont) #! print
-
-    #     return cont
-    
-    def ultimoRegistro(self, cursor:pyodbc.Cursor):
-        import platform
+    def exporta_dados_Windows(self):
+        """ Versão Windows completa """
+        conn = self.conectaMDB_Windows()
+        cursor = conn.cursor()
+        idmax = self.ultimoRegistro_Windows(cursor)
         
-        try:
-            if platform.system() == 'Windows':
-                query = 'SELECT Max(RegistroID) AS ID FROM Identificadores;'
-            else:
-                # Linux MDBTools pode não gostar do ponto e vírgula
-                query = 'SELECT MAX(RegistroID) AS ID FROM Identificadores'
-                
-            cursor.execute(query)
-            row = cursor.fetchone()
-            
-            if row and row[0] is not None:
-                cont = row[0]
-            else:
-                cont = 0
-                
-            return cont
-            
-        except Exception as e:
-            print(f"Erro ao buscar último registro: {e}")
-            # Se falhar, tenta uma abordagem mais simples
-            try:
-                cursor.execute("SELECT COUNT(*) FROM Identificadores")
-                count = cursor.fetchone()[0]
-                return count  # Não é ideal, mas pode funcionar como fallback
-            except:
-                return 0
-            
-    #< ------------------------------------------------------------------------------------------------------------------------------
-    def insercao_dos_dados(self, cursor:pyodbc.Cursor, idmax:int):
-        """ Criação da linha de comando SQL para a inserção dos dados no banco
-        """
-        #- contador de ID
         cont = idmax
-
-        #- captura o nome das colunas
+        relacaoID = {}
+        
+        # Captura nomes das colunas
         colunas = cursor.columns(table=self.table_name)
-
-        #- parte inicial do comando SQL
         sql_base = f'INSERT INTO {self.table_name} ('
-
-        # print([nome.column_name for nome in cursor.columns(table=table_name)])    #! consome o comando SQL
-        # n = 0
-        #- insere o nome de cada coluna no comando SQL
         for coluna in colunas:
-            # print(n, coluna.column_name)    #! imprime as colunas de gravação
-            # n += 1
             sql_base = sql_base + f'{coluna.column_name},'
-        sql_base = sql_base[:-1] + ') VALUES ('             #< sql_base[:-1] para retirar a virgula
-
-        relacaoID = {}                                      #- receberá a relação dos IDs antigos e novos
-
-        #% apenas tabelas cujo código esteja na sexta coluna
+        sql_base = sql_base[:-1] + ') VALUES ('
+        
+        #% tabelas com código na 6ª coluna
         if self.table_name in Tabelas.codigo_coluna_6:
             for row in self.table_data:
-                #- insere apenas as linhas cujo código esteja na lista 
-                if row[5] in self.codigoLista:              #- a tabela deve conter o código da estação na sexta coluna
-                    antigoID = row[0]                       #- armazena o antigo ID
-                    relacaoID.update({antigoID:cont})       #- dicionário para correlacionar os IDs antigos com os novos
-                    sql = sql_base
-                    row = list(row)
-                    row[0] = cont                           #- recebe novo número para o RegistroID
-
-                    sql = self.querypadrao(row, sql)
-
+                if row[5] in self.codigoLista:
+                    antigoID = row[0]
+                    relacaoID.update({antigoID: cont})
+                    row_list = list(row)
+                    row_list[0] = cont
+                    sql = self.querypadrao_windows(row_list, sql_base)
                     cursor.execute(sql)
-                    cont = cont + 1
-
-        #% apenas as tabelas cujo Id está relacionado as tabelas_codigo_coluna_6
-        if self.table_name in Tabelas.relacionadas:
+                    cont += 1
+        
+        #% tabelas relacionadas
+        elif self.table_name in Tabelas.relacionadas:
             for row in self.table_data:
-                if row[0] in list(self.rids.keys()):        #- executa apenas para os IDs da relação
-                    sql = sql_base
-                    row = list(row)
-                    row[0] = self.rids[row[0]]              #: recebe o RegistroID da relação => self.rids.values()
-                    
-                    sql = self.querypadrao(row, sql)
-
+                if row[0] in list(self.rids.keys()):
+                    row_list = list(row)
+                    row_list[0] = self.rids[row_list[0]]
+                    sql = self.querypadrao_windows(row_list, sql_base)
                     cursor.execute(sql)
-
-        #% apenas tabelas cujo código esteja na décima oitava coluna
-        if self.table_name in Tabelas.codigo_coluna_18:
+        
+        #% tabelas com código na 18ª coluna
+        elif self.table_name in Tabelas.codigo_coluna_18:
             for row in self.table_data:
-                #- insere apenas as linhas cujo código esteja na lista 
-                if row[17] in self.codigoLista:             #- a tabela deve conter o código da estação na décima oitava coluna
-                    sql = sql_base
-                    row = list(row)
-                    row[0] = cont                           #- recebe novo número para o RegistroID
-                    
-                    sql = self.querypadrao(row, sql)
-
+                if row[17] in self.codigoLista:
+                    row_list = list(row)
+                    row_list[0] = cont
+                    sql = self.querypadrao_windows(row_list, sql_base)
                     cursor.execute(sql)
-                    cont = cont + 1
-
-        #% importa todas as linhas da tabela sem filtro
-        if self.table_name in Tabelas.sem_codigo:
+                    cont += 1
+        
+        #% tabelas sem código
+        elif self.table_name in Tabelas.sem_codigo:
             for row in self.table_data:
-            #- insere todas as linhas da tabela 
-                sql = sql_base
-                row = list(row)
-                row[0] = cont                               #- recebe novo número para o RegistroID
-                
-                sql = self.querypadrao(row, sql)
-
+                row_list = list(row)
+                row_list[0] = cont
+                sql = self.querypadrao_windows(row_list, sql_base)
                 cursor.execute(sql)
-                cont = cont + 1
-
-        #- Atualizar o número de registros na base
-        sql =f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax}"
-        cursor.execute(sql)
-
+                cont += 1
+        
+        # Atualiza Identificadores
+        cursor.execute(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax}")
+        
+        conn.commit()
+        conn.close()
+        print(f"Tabela {self.table_name} inserida no banco MDB (Windows)")
         return relacaoID
 
     #< ------------------------------------------------------------------------------------------------------------------------------
-    def exporta_dados_MDB(self):
-        """ Importa para o MDB local a tabela do SQL
-            - conecta ao banco local
-            - importa a tabela informada
-            - desconecta
-        """
-        import platform
-        import os
+    # MÉTODOS LINUX (com mdb-tools)
+    #< ------------------------------------------------------------------------------------------------------------------------------
+    def querypadrao_linux(self, row):
+        """ Gera valores para inserção SQL no formato do Linux """
+        valores = []
+        for valor in row:
+            if pd.isnull(valor):
+                valores.append("NULL")
+            elif isinstance(valor, str):
+                v = valor.replace("'", "''")
+                valores.append(f"'{v}'")
+            elif isinstance(valor, (datetime, pd.Timestamp)):
+                valores.append(f"'{valor.strftime('%Y-%m-%d %H:%M:%S')}'")
+            else:
+                valores.append(str(valor))
+        return ", ".join(valores)
+    
+    def ultimoRegistro_Linux(self):
+        """ Lê o último ID diretamente do MDB usando mdb-export """
+        import subprocess
+        import tempfile
+        
+        try:
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False) as tmp:
+                temp_file = tmp.name
+            
+            result = subprocess.run(
+                ['mdb-export', self.path_mdb, 'Identificadores'],
+                capture_output=True, text=True, check=True
+            )
+            
+            with open(temp_file, 'w') as f:
+                f.write(result.stdout)
+            
+            df_ids = pd.read_csv(temp_file)
+            os.unlink(temp_file)
+            
+            if not df_ids.empty and 'RegistroID' in df_ids.columns:
+                idmax = df_ids['RegistroID'].max()
+                return int(idmax) if not pd.isna(idmax) else 0
+            return 0
+            
+        except Exception as e:
+            print(f"Erro ao ler último registro no Linux: {e}")
+            return 0
+    
+    def executar_sql_linux(self, comandos):
+        """ Executa comandos SQL usando mdb-sql """
         import subprocess
         
-        if platform.system() != 'Windows':
-            print("=== DEBUG: Verificando ambiente Linux ===")
+        try:
+            # Junta todos os comandos em um único bloco
+            sql_completo = "\n".join(comandos)
             
-            # 1. Verificar drivers registrados
-            try:
-                result = subprocess.run(['odbcinst', '-q', '-d'], 
-                                    capture_output=True, text=True)
-                print("Drivers ODBC registrados:")
-                print(result.stdout)
-            except:
-                print("Comando odbcinst não disponível")
+            # Executa usando mdb-sql
+            result = subprocess.run(
+                ['mdb-sql', '-p', self.path_mdb],
+                input=sql_completo,
+                capture_output=True, text=True, encoding='utf-8'
+            )
             
-            # 2. Verificar arquivos do driver
-            print("\nProcurando arquivos do driver MDBTools:")
-            try:
-                result = subprocess.run(['find', '/usr', '-name', '*mdbodbc*', '-type', 'f', '-ls'], 
-                                    capture_output=True, text=True, timeout=10)
-                print(result.stdout)
-            except:
-                print("Erro ao procurar arquivos")
+            if result.returncode != 0:
+                print(f"Erro ao executar SQL: {result.stderr}")
+                return False
+            return True
             
-            # 3. Verificar permissões
-            print("\nVerificando permissões:")
-            for path in ['/usr/lib/x86_64-linux-gnu/odbc', '/usr/lib', '/etc/odbcinst.ini']:
-                if os.path.exists(path):
-                    print(f"{path}: {oct(os.stat(path).st_mode)[-3:]}")
-            
-            print("=== FIM DEBUG ===\n")
-
-        #< ------------------------------------------------------------------------------------------------------------------------------
-
-        #- faz a conexão com o banco
-        conn = self.conectaMDB()
-
-        #- Cursor para a inserção de operações SQL
-        cursor = conn.cursor()
-
-        #- resgata o ID do último registro
-        idmax = self.ultimoRegistro(cursor)
-
-        #- comando SQL para a inserção no banco de dados
-        relacaoID = self.insercao_dos_dados(cursor, idmax)
-
-        conn.commit()
-        # print(f"Tabela \033[90m{self.table_name}\033[0m inserida no banco MDB")   #! print
-        print(f"Tabela {self.table_name} inserida no banco MDB")   #! print
-        #< ------------------------------------------------------------------------------------------------------------------------------
-        #- Fecha a conexão
-        conn.close()
-        # print("-----\nDisconnected from Local Database\n-----") #! print
-
+        except Exception as e:
+            print(f"Erro no mdb-sql: {e}")
+            return False
+    
+    def exporta_dados_Linux(self):
+        """ Versão Linux completa """
+        import subprocess
+        import tempfile
+        
+        idmax = self.ultimoRegistro_Linux()
+        cont = idmax
+        relacaoID = {}
+        comandos_sql = []
+        
+        #% tabelas com código na 6ª coluna
+        if self.table_name in Tabelas.codigo_coluna_6:
+            for row in self.table_data:
+                if row[5] in self.codigoLista:
+                    antigoID = row[0]
+                    relacaoID.update({antigoID: cont})
+                    row_list = list(row)
+                    row_list[0] = cont
+                    valores = self.querypadrao_linux(row_list)
+                    comandos_sql.append(f"INSERT INTO {self.table_name} VALUES ({valores});")
+                    cont += 1
+        
+        #% tabelas relacionadas
+        elif self.table_name in Tabelas.relacionadas:
+            for row in self.table_data:
+                if row[0] in list(self.rids.keys()):
+                    row_list = list(row)
+                    row_list[0] = self.rids[row_list[0]]
+                    valores = self.querypadrao_linux(row_list)
+                    comandos_sql.append(f"INSERT INTO {self.table_name} VALUES ({valores});")
+        
+        #% tabelas com código na 18ª coluna
+        elif self.table_name in Tabelas.codigo_coluna_18:
+            for row in self.table_data:
+                if row[17] in self.codigoLista:
+                    row_list = list(row)
+                    row_list[0] = cont
+                    valores = self.querypadrao_linux(row_list)
+                    comandos_sql.append(f"INSERT INTO {self.table_name} VALUES ({valores});")
+                    cont += 1
+        
+        #% tabelas sem código
+        elif self.table_name in Tabelas.sem_codigo:
+            for row in self.table_data:
+                row_list = list(row)
+                row_list[0] = cont
+                valores = self.querypadrao_linux(row_list)
+                comandos_sql.append(f"INSERT INTO {self.table_name} VALUES ({valores});")
+                cont += 1
+        
+        # Atualiza Identificadores
+        comandos_sql.append(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax};")
+        
+        # Executa todos os comandos
+        if self.executar_sql_linux(comandos_sql):
+            print(f"Tabela {self.table_name} inserida no banco MDB (Linux)")
+        else:
+            print(f"Falha ao inserir tabela {self.table_name}")
+        
         return relacaoID
+
+    #< ------------------------------------------------------------------------------------------------------------------------------
+    # MÉTODO PRINCIPAL - decide qual versão usar
+    #< ------------------------------------------------------------------------------------------------------------------------------
+    def exporta_dados_MDB(self):
+        """ Importa para o MDB local a tabela do SQL """
+        if self.platform == 'Windows':
+            return self.exporta_dados_Windows()
+        else:
+            return self.exporta_dados_Linux()
+    
+    # Mantém os métodos antigos comentados ou remove
+    # (remova os métodos antigos que não estão sendo usados)
 
 #< ------------------------------------------------------------------------------------------------------------------------------
 #$ main
