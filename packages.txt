@@ -2,3 +2,4 @@ mdbtools
 odbc-mdbtools
 zlib1g-dev
 libjpeg-dev
+libodbc1
