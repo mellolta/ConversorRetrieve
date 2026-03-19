@@ -383,60 +383,93 @@ class ExportaTabelaMDB():
             return 0
     
     #< ------------------------------------------------------------------------------------------------------------------------------
+    # def executar_sql_linux(self, comandos):
+    #     """ Executa comandos SQL usando mdb-sql com a sintaxe correta """
+    #     import subprocess
+    #     import tempfile
+    #     import os
+        
+    #     print(f"\n=== DEBUG - Executando {len(comandos)} comandos SQL ===")
+        
+    #     # Cria arquivo SQL temporário
+    #     with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp:
+    #         sql_file = tmp.name
+    #         # Escreve todos os comandos
+    #         tmp.write("\n".join(comandos))
+        
+    #     print(f"Arquivo SQL salvo em: {sql_file}")
+        
+    #     # Comando correto: mdb-sql -i arquivo.sql banco.mdb
+    #     try:
+    #         print("\nExecutando: mdb-sql -i", sql_file, self.path_mdb)
+    #         result = subprocess.run(
+    #             ['mdb-sql', '-i', sql_file, self.path_mdb],
+    #             capture_output=True, text=True, encoding='utf-8'
+    #         )
+            
+    #         print(f"Return code: {result.returncode}")
+    #         if result.stdout:
+    #             print(f"stdout: {result.stdout[:200]}")
+    #         if result.stderr:
+    #             print(f"stderr: {result.stderr}")
+            
+    #         # Se falhar, tenta sem o -i (versão antiga)
+    #         if result.returncode != 0:
+    #             print("\nTentativa alternativa: mdb-sql", self.path_mdb, "<", sql_file)
+    #             with open(sql_file, 'r') as f:
+    #                 sql_content = f.read()
+                
+    #             result = subprocess.run(
+    #                 ['mdb-sql', self.path_mdb],
+    #                 input=sql_content,
+    #                 capture_output=True, text=True, encoding='utf-8'
+    #             )
+    #             print(f"Return code: {result.returncode}")
+    #             if result.stderr:
+    #                 print(f"stderr: {result.stderr}")
+            
+    #         return result.returncode == 0
+            
+    #     except Exception as e:
+    #         print(f"Erro ao executar mdb-sql: {e}")
+    #         return False
+    #     finally:
+    #         # Limpa arquivo temporário
+    #         os.unlink(sql_file)
+    
     def executar_sql_linux(self, comandos):
-        """ Executa comandos SQL usando mdb-sql com a sintaxe correta """
+        """ Executa comandos SQL usando mdb-sql com commit explícito """
         import subprocess
         import tempfile
         import os
         
-        print(f"\n=== DEBUG - Executando {len(comandos)} comandos SQL ===")
+        # Adiciona BEGIN TRANSACTION e COMMIT
+        comandos_completos = [
+            "BEGIN TRANSACTION;",
+            *comandos,
+            "COMMIT;"
+        ]
         
-        # Cria arquivo SQL temporário
         with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp:
             sql_file = tmp.name
-            # Escreve todos os comandos
-            tmp.write("\n".join(comandos))
+            tmp.write("\n".join(comandos_completos))
         
-        print(f"Arquivo SQL salvo em: {sql_file}")
-        
-        # Comando correto: mdb-sql -i arquivo.sql banco.mdb
         try:
-            print("\nExecutando: mdb-sql -i", sql_file, self.path_mdb)
+            # Tenta executar com mdb-sql
             result = subprocess.run(
                 ['mdb-sql', '-i', sql_file, self.path_mdb],
-                capture_output=True, text=True, encoding='utf-8'
+                capture_output=True, text=True
             )
             
-            print(f"Return code: {result.returncode}")
-            if result.stdout:
-                print(f"stdout: {result.stdout[:200]}")
-            if result.stderr:
-                print(f"stderr: {result.stderr}")
-            
-            # Se falhar, tenta sem o -i (versão antiga)
-            if result.returncode != 0:
-                print("\nTentativa alternativa: mdb-sql", self.path_mdb, "<", sql_file)
-                with open(sql_file, 'r') as f:
-                    sql_content = f.read()
-                
-                result = subprocess.run(
-                    ['mdb-sql', self.path_mdb],
-                    input=sql_content,
-                    capture_output=True, text=True, encoding='utf-8'
-                )
-                print(f"Return code: {result.returncode}")
-                if result.stderr:
-                    print(f"stderr: {result.stderr}")
-            
-            return result.returncode == 0
-            
-        except Exception as e:
-            print(f"Erro ao executar mdb-sql: {e}")
-            return False
+            if result.returncode == 0:
+                print(f"Tabela {self.table_name} inserida com sucesso!")
+                return True
+            else:
+                print(f"Erro: {result.stderr}")
+                return False
         finally:
-            # Limpa arquivo temporário
             os.unlink(sql_file)
-    
+
     #< ------------------------------------------------------------------------------------------------------------------------------
     def exporta_dados_Linux(self):
         """ Versão Linux completa """
