@@ -207,16 +207,9 @@ class Tabelas():
 #< ------------------------------------------------------------------------------------------------------------------------------
 class ExportaTabelaMDB():
     """ Importa para o MDB local a tabela do SQL
-        Versão com mdb-import para Linux e pyodbc para Windows
+        Versão corrigida para Linux e Windows
     """
     def __init__(self, path_mdb: str, table_name: str, table_data, codigoLista: list, rids):
-        """ Parâmetros de entrada:
-            - path_mdb: endereço do banco
-            - table_name: nome da tabela
-            - table_data: tabela capturada do SQL
-            - codigoLista: relação de códigos das estações retirados da planilha
-            - rids: relação entre os IDs antigos e novos (apenas para tabelas relacionadas)
-        """
         self.path_mdb = path_mdb
         self.table_name = table_name
         self.table_data = table_data
@@ -225,10 +218,9 @@ class ExportaTabelaMDB():
         self.platform = platform.system()
 
     #< ------------------------------------------------------------------------------------------------------------------------------
-    # MÉTODOS WINDOWS (com pyodbc)
+    # MÉTODOS WINDOWS (com pyodbc) - IGUAL AO SEU ORIGINAL
     #< ------------------------------------------------------------------------------------------------------------------------------
     def conectaMDB_Windows(self) -> pyodbc.Connection:
-        """ Conecta com o MDB local no Windows """
         con_string = f"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={self.path_mdb};"
         return pyodbc.connect(con_string)
     
@@ -239,7 +231,6 @@ class ExportaTabelaMDB():
         return idmax[0][0]
     
     def querypadrao_windows(self, row, sql):
-        """ Versão Windows da query """
         valores_formatados = []
         for valor in row:
             if pd.isnull(valor): 
@@ -251,11 +242,9 @@ class ExportaTabelaMDB():
                 valores_formatados.append(f'#{valor.strftime("%Y-%m-%d %H:%M")}#')
             else:
                 valores_formatados.append(str(valor))
-        
         return sql + ", ".join(valores_formatados) + ")"
     
     def exporta_dados_Windows(self):
-        """ Versão Windows completa """
         conn = self.conectaMDB_Windows()
         cursor = conn.cursor()
         idmax = self.ultimoRegistro_Windows(cursor)
@@ -263,14 +252,10 @@ class ExportaTabelaMDB():
         cont = idmax
         relacaoID = {}
         
-        # Captura nomes das colunas
         colunas = cursor.columns(table=self.table_name)
-        sql_base = f'INSERT INTO {self.table_name} ('
-        for coluna in colunas:
-            sql_base = sql_base + f'{coluna.column_name},'
-        sql_base = sql_base[:-1] + ') VALUES ('
+        nomes_colunas = [coluna.column_name for coluna in colunas]
+        sql_base = f'INSERT INTO {self.table_name} (' + ', '.join(nomes_colunas) + ') VALUES ('
         
-        #% tabelas com código na 6ª coluna
         if self.table_name in Tabelas.codigo_coluna_6:
             for row in self.table_data:
                 if row[5] in self.codigoLista:
@@ -282,7 +267,6 @@ class ExportaTabelaMDB():
                     cursor.execute(sql)
                     cont += 1
         
-        #% tabelas relacionadas
         elif self.table_name in Tabelas.relacionadas:
             for row in self.table_data:
                 if row[0] in list(self.rids.keys()):
@@ -291,7 +275,6 @@ class ExportaTabelaMDB():
                     sql = self.querypadrao_windows(row_list, sql_base)
                     cursor.execute(sql)
         
-        #% tabelas com código na 18ª coluna
         elif self.table_name in Tabelas.codigo_coluna_18:
             for row in self.table_data:
                 if row[17] in self.codigoLista:
@@ -301,7 +284,6 @@ class ExportaTabelaMDB():
                     cursor.execute(sql)
                     cont += 1
         
-        #% tabelas sem código
         elif self.table_name in Tabelas.sem_codigo:
             for row in self.table_data:
                 row_list = list(row)
@@ -310,205 +292,195 @@ class ExportaTabelaMDB():
                 cursor.execute(sql)
                 cont += 1
         
-        # Atualiza Identificadores
         cursor.execute(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax}")
-        
         conn.commit()
         conn.close()
         print(f"Tabela {self.table_name} inserida no banco MDB (Windows)")
         return relacaoID
 
     #< ------------------------------------------------------------------------------------------------------------------------------
-    # MÉTODOS LINUX (com mdb-import)
+    # MÉTODOS LINUX CORRIGIDOS
     #< ------------------------------------------------------------------------------------------------------------------------------
-    def preparar_dados_para_csv(self, row_list):
-        """ Prepara uma linha de dados para o formato CSV """
-        dados = []
-        for valor in row_list:
-            if pd.isnull(valor):
-                dados.append("")  # CSV vazio para NULL
-            elif isinstance(valor, (datetime, pd.Timestamp)):
-                dados.append(valor.strftime('%Y-%m-%d %H:%M:%S'))
-            elif isinstance(valor, float):
-                # Formata float sem notação científica
-                dados.append(f"{valor:.8f}".rstrip('0').rstrip('.'))
-            else:
-                dados.append(str(valor))
-        return dados
-    
-    def ultimoRegistro_Linux(self):
-        """ Lê o último ID diretamente do MDB usando mdb-export """
+    def get_colunas_linux(self):
+        """Obtém os nomes das colunas da tabela usando mdb-schema"""
         import subprocess
-        import tempfile
-        import csv
-        import os
+        import re
         
         try:
-            # Exporta a tabela Identificadores para CSV
+            result = subprocess.run(
+                ['mdb-schema', self.path_mdb, self.table_name],
+                capture_output=True, text=True
+            )
+            
+            # Extrai nomes das colunas do schema
+            colunas = []
+            linhas = result.stdout.split('\n')
+            for linha in linhas:
+                match = re.search(r'^\s+([a-zA-Z0-9_]+)', linha)
+                if match:
+                    colunas.append(match.group(1))
+            
+            if not colunas:
+                # Fallback: nomes genéricos
+                if self.table_data and len(self.table_data) > 0:
+                    colunas = [f"col{i}" for i in range(len(self.table_data[0]))]
+            
+            return colunas
+        except:
+            return [f"col{i}" for i in range(len(self.table_data[0]))] if self.table_data else []
+    
+    def ultimoRegistro_Linux(self):
+        import subprocess
+        import io
+        import pandas as pd
+        
+        try:
             result = subprocess.run(
                 ['mdb-export', self.path_mdb, 'Identificadores'],
                 capture_output=True, text=True, check=True
             )
             
-            # Lê o CSV exportado
             if result.stdout.strip():
-                import io
                 df_ids = pd.read_csv(io.StringIO(result.stdout))
                 if not df_ids.empty and 'RegistroID' in df_ids.columns:
                     idmax = df_ids['RegistroID'].max()
                     return int(idmax) if not pd.isna(idmax) else 0
-            
             return 0
-            
-        except subprocess.CalledProcessError:
-            # Tabela pode não existir ainda
-            return 0
-        except Exception as e:
-            print(f"Erro ao ler último registro no Linux: {e}")
+        except:
             return 0
     
-    def importar_csv_linux(self, csv_file):
-        """ Importa um arquivo CSV para o MDB usando mdb-import """
-        import subprocess
-        
-        try:
-            # Verifica se a tabela existe
-            check = subprocess.run(
-                ['mdb-export', self.path_mdb, self.table_name],
-                capture_output=True, text=True
-            )
-            
-            # Comando para importar
-            cmd = [
-                'mdb-import',
-                '-d', ',',        # delimitador vírgula
-                '-I',              # insert (em vez de replace)
-                self.path_mdb,
-                csv_file,
-                self.table_name
-            ]
-            
-            print(f"Importando {self.table_name}...")
-            result = subprocess.run(
-                cmd,
-                capture_output=True, text=True
-            )
-            
-            if result.returncode != 0:
-                print(f"Erro na importação: {result.stderr}")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            print(f"Erro ao importar CSV: {e}")
-            return False
-    
-    def atualizar_identificadores_linux(self, idmax, cont):
-        """ Atualiza a tabela Identificadores usando mdb-sql """
-        import subprocess
-        import tempfile
-        
-        if cont <= idmax:
-            return  # Nenhum registro novo
-        
-        # Cria comando SQL
-        sql = f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax};"
-        
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp:
-            sql_file = tmp.name
-            tmp.write(sql)
-        
-        try:
-            subprocess.run(
-                ['mdb-sql', '-i', sql_file, self.path_mdb],
-                capture_output=True
-            )
-        finally:
-            os.unlink(sql_file)
+    def formatar_valor_linux(self, valor):
+        """Formata um valor para o formato esperado pelo MDBTools"""
+        if pd.isnull(valor):
+            return ''  # CSV vazio = NULL
+        elif isinstance(valor, (datetime, pd.Timestamp)):
+            # Formato ISO com aspas - o MDBTools entende
+            return valor.strftime('%Y-%m-%d %H:%M:%S')
+        elif isinstance(valor, float):
+            # Evita notação científica
+            return f"{valor:.10f}".rstrip('0').rstrip('.') if '.' in f"{valor:.10f}" else f"{valor:.10f}"
+        else:
+            return str(valor)
     
     def exporta_dados_Linux(self):
-        """ Versão Linux usando mdb-import """
+        """Versão Linux corrigida - usa INSERT com colunas explícitas"""
+        import subprocess
         import tempfile
-        import csv
         import os
+        
+        print(f"\n=== EXPORTANDO {self.table_name} NO LINUX ===")
         
         # Pega o último ID
         idmax = self.ultimoRegistro_Linux()
         cont = idmax
         relacaoID = {}
+        registros_filtrados = []
         
-        # Cria arquivo CSV temporário
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False, newline='') as tmp:
-            csv_file = tmp.name
-            writer = csv.writer(tmp, quoting=csv.QUOTE_MINIMAL)
-            
-            #% tabelas com código na 6ª coluna
-            if self.table_name in Tabelas.codigo_coluna_6:
-                for row in self.table_data:
-                    if row[5] in self.codigoLista:
-                        antigoID = row[0]
-                        relacaoID.update({antigoID: cont})
-                        row_list = list(row)
-                        row_list[0] = cont
-                        dados = self.preparar_dados_para_csv(row_list)
-                        writer.writerow(dados)
-                        cont += 1
-            
-            #% tabelas relacionadas
-            elif self.table_name in Tabelas.relacionadas:
-                for row in self.table_data:
-                    if row[0] in list(self.rids.keys()):
-                        row_list = list(row)
-                        row_list[0] = self.rids[row_list[0]]
-                        dados = self.preparar_dados_para_csv(row_list)
-                        writer.writerow(dados)
-            
-            #% tabelas com código na 18ª coluna
-            elif self.table_name in Tabelas.codigo_coluna_18:
-                for row in self.table_data:
-                    if row[17] in self.codigoLista:
-                        row_list = list(row)
-                        row_list[0] = cont
-                        dados = self.preparar_dados_para_csv(row_list)
-                        writer.writerow(dados)
-                        cont += 1
-            
-            #% tabelas sem código
-            elif self.table_name in Tabelas.sem_codigo:
-                for row in self.table_data:
+        # Filtra registros (mesma lógica do Windows)
+        if self.table_name in Tabelas.codigo_coluna_6:
+            for row in self.table_data:
+                if row[5] in self.codigoLista:
+                    antigoID = row[0]
+                    relacaoID.update({antigoID: cont})
                     row_list = list(row)
                     row_list[0] = cont
-                    dados = self.preparar_dados_para_csv(row_list)
-                    writer.writerow(dados)
+                    registros_filtrados.append(row_list)
                     cont += 1
         
-        # Importa o CSV
-        if cont > idmax or self.table_name in Tabelas.relacionadas:
-            sucesso = self.importar_csv_linux(csv_file)
-            if sucesso:
-                print(f"Tabela {self.table_name} inserida no banco MDB (Linux)")
-                # Atualiza Identificadores se necessário
-                if cont > idmax:
-                    self.atualizar_identificadores_linux(idmax, cont)
-            else:
-                print(f"Falha ao inserir tabela {self.table_name}")
+        elif self.table_name in Tabelas.relacionadas:
+            for row in self.table_data:
+                if row[0] in list(self.rids.keys()):
+                    row_list = list(row)
+                    row_list[0] = self.rids[row_list[0]]
+                    registros_filtrados.append(row_list)
         
-        # Limpa arquivo temporário
-        os.unlink(csv_file)
+        elif self.table_name in Tabelas.codigo_coluna_18:
+            for row in self.table_data:
+                if row[17] in self.codigoLista:
+                    row_list = list(row)
+                    row_list[0] = cont
+                    registros_filtrados.append(row_list)
+                    cont += 1
+        
+        elif self.table_name in Tabelas.sem_codigo:
+            for row in self.table_data:
+                row_list = list(row)
+                row_list[0] = cont
+                registros_filtrados.append(row_list)
+                cont += 1
+        
+        if not registros_filtrados:
+            print("Nenhum registro para inserir")
+            return relacaoID
+        
+        # Obtém nomes das colunas
+        colunas = self.get_colunas_linux()
+        print(f"Colunas: {colunas}")
+        
+        # Cria arquivo SQL com INSERTs explícitos
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False, encoding='utf-8') as tmp:
+            sql_file = tmp.name
+            
+            # Escreve os INSERTs
+            for row in registros_filtrados:
+                valores = []
+                for i, valor in enumerate(row):
+                    if i < len(colunas):
+                        valor_formatado = self.formatar_valor_linux(valor)
+                        valores.append(f"'{valor_formatado}'" if valor_formatado else "NULL")
+                    else:
+                        valores.append("NULL")
+                
+                insert_sql = f"INSERT INTO {self.table_name} ({', '.join(colunas)}) VALUES ({', '.join(valores)});\n"
+                tmp.write(insert_sql)
+        
+        print(f"Arquivo SQL criado: {sql_file}")
+        print(f"Total de INSERTs: {len(registros_filtrados)}")
+        
+        # Executa o SQL usando mdb-sql
+        try:
+            cmd = ['mdb-sql', '-i', sql_file, self.path_mdb]
+            print(f"Executando: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True
+            )
+            
+            print(f"Return code: {result.returncode}")
+            if result.stderr:
+                print(f"stderr: {result.stderr}")
+            
+            if result.returncode == 0:
+                print(f"✅ Tabela {self.table_name} inserida com sucesso!")
+                
+                # Atualiza Identificadores
+                if cont > idmax:
+                    with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp_up:
+                        up_file = tmp_up.name
+                        tmp_up.write(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax};")
+                    
+                    subprocess.run(['mdb-sql', '-i', up_file, self.path_mdb], capture_output=True)
+                    os.unlink(up_file)
+            else:
+                print(f"❌ Falha ao inserir tabela {self.table_name}")
+                
+        except Exception as e:
+            print(f"Erro: {e}")
+        finally:
+            os.unlink(sql_file)
         
         return relacaoID
 
     #< ------------------------------------------------------------------------------------------------------------------------------
-    # MÉTODO PRINCIPAL - decide qual versão usar
+    # MÉTODO PRINCIPAL
     #< ------------------------------------------------------------------------------------------------------------------------------
     def exporta_dados_MDB(self):
-        """ Importa para o MDB local a tabela do SQL """
         if self.platform == 'Windows':
             return self.exporta_dados_Windows()
         else:
             return self.exporta_dados_Linux()
-
+        
 #< ------------------------------------------------------------------------------------------------------------------------------
 # MAIN
 #< ------------------------------------------------------------------------------------------------------------------------------
