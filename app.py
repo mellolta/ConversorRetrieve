@@ -2,11 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import uuid  # Biblioteca para gerar IDs únicos
-import pyodbc 
 from Conversor import processar_dados_pcd, ExportaTabelaMDB
-
-# Útil para conferir se o driver MDBTools apareceu no servidor
-# st.sidebar.write("Drivers:", pyodbc.drivers())
 
 st.set_page_config(page_title="Conversor Retrieve Multiarquivos", layout="wide")
 

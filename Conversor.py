@@ -247,7 +247,7 @@ class ExportaTabelaMDB():
             
         con_string = f"Driver={driver};DBQ={self.path_mdb};"
         return pyodbc.connect(con_string)
-        
+    
     #< ------------------------------------------------------------------------------------------------------------------------------
     def querypadrao(self, row, sql: str):
         valores_formatados = []
@@ -268,33 +268,6 @@ class ExportaTabelaMDB():
         sql = sql + ", ".join(valores_formatados) + ")"
         # Garantia final para qualquer "None" que tenha escapado como string
         return sql.replace('None', 'null')
-
-    # def querypadrao(self, row, sql: str):
-    #     valores_formatados = []
-    #     for valor in row:
-    #         # 1. Tratar nulos (essencial para MDBTools)
-    #         if pd.isnull(valor): 
-    #             valores_formatados.append("NULL")
-            
-    #         # 2. Tratar Strings
-    #         elif isinstance(valor, str):
-    #             v = valor.replace("'", "''") # Escape de aspas simples padrão SQL
-    #             valores_formatados.append(f"'{v}'")
-            
-    #         # 3. Tratar Datas (O MDBTools prefere o formato ISO ou mm/dd/yyyy)
-    #         elif isinstance(valor, (datetime, pd.Timestamp)):
-    #             # Formato compatível: #YYYY-MM-DD HH:MM:SS#
-    #             valores_formatados.append(f"#{valor.strftime('%Y-%m-%d %H:%M:%S')}#")
-            
-    #         # 4. Booleanos
-    #         elif isinstance(valor, bool):
-    #             valores_formatados.append("1" if valor else "0")
-                
-    #         else:
-    #             valores_formatados.append(str(valor))
-                
-    #     sql = sql + ", ".join(valores_formatados) + ")"
-    #     return sql
 
     #< ------------------------------------------------------------------------------------------------------------------------------
     def ultimoRegistro(self, cursor:pyodbc.Connection):
