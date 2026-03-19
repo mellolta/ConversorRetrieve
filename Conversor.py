@@ -703,17 +703,14 @@ class ExportaTabelaMDB():
 
     #< ------------------------------------------------------------------------------------------------------------------------------
     def exporta_dados_Linux_v4(self):
+        """ Versão Linux usando mdb-import (mais confiável) """
         import subprocess
         import tempfile
+        import csv
         import os
         
-        # 1. Obter o ID máximo atual
-        idmax = self.ultimoRegistro_Linux()
-        cont = idmax
-        relacaoID = {}
-        
         print(f"\n=== INICIANDO EXPORTAÇÃO LINUX V3 ===")
-            
+        
         # Pega o último ID
         idmax = self.ultimoRegistro_Linux()
         cont = idmax
@@ -732,39 +729,70 @@ class ExportaTabelaMDB():
                     cont += 1
         
         # ... (outros casos)
-
+        
         if not registros_para_inserir:
             return relacaoID
-
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp:
-            sql_path = tmp.name
-            # O mdb-sql as vezes precisa de comandos simples por linha
-            for row in registros_para_inserir:
-                valores = []
-                for v in row:
-                    if pd.isnull(v): valores.append("NULL")
-                    elif isinstance(v, (datetime, pd.Timestamp)): 
-                        valores.append(f"'{v.strftime('%Y-%m-%d %H:%M:%S')}'")
-                    else: 
-                        # Escapar aspas simples para evitar erro de sintaxe SQL
-                        txt = str(v).replace("'", "''")
-                        valores.append(f"'{txt}'")
-                
-                sql = f"INSERT INTO {self.table_name} VALUES ({', '.join(valores)});\n"
-                tmp.write(sql)
+        
+        # Cria arquivo CSV
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False, newline='') as tmp:
+            csv_file = tmp.name
+            writer = csv.writer(tmp)
             
-            # Atualizar o contador de IDs globais do banco
-            tmp.write(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax};\n")
-
+            # Escreve dados
+            for row in registros_para_inserir:
+                dados = []
+                for valor in row:
+                    if pd.isnull(valor):
+                        dados.append('')
+                    elif isinstance(valor, (datetime, pd.Timestamp)):
+                        dados.append(valor.strftime('%Y-%m-%d %H:%M'))
+                    else:
+                        dados.append(str(valor))
+                writer.writerow(dados)
+        
+        # Usa mdb-import (caminho direto para o binário)
         try:
-            # EXECUTAR O COMANDO NO BANCO
-            # -F força a execução mesmo com erros menores
-            cmd = ['mdb-sql', '-F', '-p', '-i', sql_path, self.path_mdb]
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-        finally:
-            if os.path.exists(sql_path):
-                os.unlink(sql_path)
+            # Encontra o caminho real do mdb-import
+            which_result = subprocess.run(['which', 'mdb-import'], capture_output=True, text=True)
+            mdb_import_path = which_result.stdout.strip()
+            
+            if not mdb_import_path:
+                mdb_import_path = '/usr/bin/mdb-import'
+            
+            print(f"Usando mdb-import em: {mdb_import_path}")
+            
+            # Comando: mdb-import -d , arquivo.mdb dados.csv tabela
+            cmd = [mdb_import_path, '-d', ',', self.path_mdb, csv_file, self.table_name]
+            print(f"Executando: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True
+            )
+            
+            print(f"Return code: {result.returncode}")
+            if result.stderr:
+                print(f"stderr: {result.stderr}")
+            
+            if result.returncode == 0:
+                print(f"✅ Tabela {self.table_name} importada com sucesso!")
                 
+                # Atualiza Identificadores
+                if cont > idmax:
+                    with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp_up:
+                        up_file = tmp_up.name
+                        tmp_up.write(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax};")
+                    
+                    subprocess.run(['mdb-sql', '-i', up_file, self.path_mdb], capture_output=True)
+                    os.unlink(up_file)
+            else:
+                print(f"❌ Falha na importação")
+                
+        except Exception as e:
+            print(f"Erro: {e}")
+        finally:
+            os.unlink(csv_file)
+        
         return relacaoID
 
     #< ------------------------------------------------------------------------------------------------------------------------------
