@@ -608,6 +608,100 @@ class ExportaTabelaMDB():
         return relacaoID
 
     #< ------------------------------------------------------------------------------------------------------------------------------
+    def exporta_dados_Linux_v3(self):
+        """ Versão Linux usando mdb-import (mais confiável) """
+        import subprocess
+        import tempfile
+        import csv
+        import os
+        
+        print(f"\n=== INICIANDO EXPORTAÇÃO LINUX V3 ===")
+        
+        # Pega o último ID
+        idmax = self.ultimoRegistro_Linux()
+        cont = idmax
+        relacaoID = {}
+        registros_para_inserir = []
+        
+        # Filtra registros (mesmo código)
+        if self.table_name in Tabelas.codigo_coluna_6:
+            for row in self.table_data:
+                if row[5] in self.codigoLista:
+                    antigoID = row[0]
+                    relacaoID.update({antigoID: cont})
+                    row_list = list(row)
+                    row_list[0] = cont
+                    registros_para_inserir.append(row_list)
+                    cont += 1
+        
+        # ... (outros casos)
+        
+        if not registros_para_inserir:
+            return relacaoID
+        
+        # Cria arquivo CSV
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False, newline='') as tmp:
+            csv_file = tmp.name
+            writer = csv.writer(tmp)
+            
+            # Escreve dados
+            for row in registros_para_inserir:
+                dados = []
+                for valor in row:
+                    if pd.isnull(valor):
+                        dados.append('')
+                    elif isinstance(valor, (datetime, pd.Timestamp)):
+                        dados.append(valor.strftime('%Y-%m-%d %H:%M:%S'))
+                    else:
+                        dados.append(str(valor))
+                writer.writerow(dados)
+        
+        # Usa mdb-import (caminho direto para o binário)
+        try:
+            # Encontra o caminho real do mdb-import
+            which_result = subprocess.run(['which', 'mdb-import'], capture_output=True, text=True)
+            mdb_import_path = which_result.stdout.strip()
+            
+            if not mdb_import_path:
+                mdb_import_path = '/usr/bin/mdb-import'
+            
+            print(f"Usando mdb-import em: {mdb_import_path}")
+            
+            # Comando: mdb-import -d , arquivo.mdb dados.csv tabela
+            cmd = [mdb_import_path, '-d', ',', self.path_mdb, csv_file, self.table_name]
+            print(f"Executando: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True
+            )
+            
+            print(f"Return code: {result.returncode}")
+            if result.stderr:
+                print(f"stderr: {result.stderr}")
+            
+            if result.returncode == 0:
+                print(f"✅ Tabela {self.table_name} importada com sucesso!")
+                
+                # Atualiza Identificadores
+                if cont > idmax:
+                    with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp_up:
+                        up_file = tmp_up.name
+                        tmp_up.write(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax};")
+                    
+                    subprocess.run(['mdb-sql', '-i', up_file, self.path_mdb], capture_output=True)
+                    os.unlink(up_file)
+            else:
+                print(f"❌ Falha na importação")
+                
+        except Exception as e:
+            print(f"Erro: {e}")
+        finally:
+            os.unlink(csv_file)
+        
+        return relacaoID
+
+    #< ------------------------------------------------------------------------------------------------------------------------------
     # MÉTODO PRINCIPAL
     #< ------------------------------------------------------------------------------------------------------------------------------
     def exporta_dados_MDB(self):
@@ -615,7 +709,7 @@ class ExportaTabelaMDB():
             return self.exporta_dados_Windows()
         else:
             # return self.exporta_dados_Linux()
-            return self.exporta_dados_Linux_v2()
+            return self.exporta_dados_Linux_v3()
         
 #< ------------------------------------------------------------------------------------------------------------------------------
 # MAIN
