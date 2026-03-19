@@ -702,6 +702,72 @@ class ExportaTabelaMDB():
         return relacaoID
 
     #< ------------------------------------------------------------------------------------------------------------------------------
+    def exporta_dados_Linux_v4(self):
+        import subprocess
+        import tempfile
+        import os
+        
+        # 1. Obter o ID máximo atual
+        idmax = self.ultimoRegistro_Linux()
+        cont = idmax
+        relacaoID = {}
+        
+        print(f"\n=== INICIANDO EXPORTAÇÃO LINUX V3 ===")
+            
+        # Pega o último ID
+        idmax = self.ultimoRegistro_Linux()
+        cont = idmax
+        relacaoID = {}
+        registros_para_inserir = []
+        
+        # Filtra registros (mesmo código)
+        if self.table_name in Tabelas.codigo_coluna_6:
+            for row in self.table_data:
+                if row[5] in self.codigoLista:
+                    antigoID = row[0]
+                    relacaoID.update({antigoID: cont})
+                    row_list = list(row)
+                    row_list[0] = cont
+                    registros_para_inserir.append(row_list)
+                    cont += 1
+        
+        # ... (outros casos)
+
+        if not registros_para_inserir:
+            return relacaoID
+
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp:
+            sql_path = tmp.name
+            # O mdb-sql as vezes precisa de comandos simples por linha
+            for row in registros_para_inserir:
+                valores = []
+                for v in row:
+                    if pd.isnull(v): valores.append("NULL")
+                    elif isinstance(v, (datetime, pd.Timestamp)): 
+                        valores.append(f"'{v.strftime('%Y-%m-%d %H:%M:%S')}'")
+                    else: 
+                        # Escapar aspas simples para evitar erro de sintaxe SQL
+                        txt = str(v).replace("'", "''")
+                        valores.append(f"'{txt}'")
+                
+                sql = f"INSERT INTO {self.table_name} VALUES ({', '.join(valores)});\n"
+                tmp.write(sql)
+            
+            # Atualizar o contador de IDs globais do banco
+            tmp.write(f"UPDATE Identificadores SET RegistroID = {cont} WHERE RegistroID = {idmax};\n")
+
+        try:
+            # EXECUTAR O COMANDO NO BANCO
+            # -F força a execução mesmo com erros menores
+            cmd = ['mdb-sql', '-F', '-p', '-i', sql_path, self.path_mdb]
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+        finally:
+            if os.path.exists(sql_path):
+                os.unlink(sql_path)
+                
+        return relacaoID
+
+    #< ------------------------------------------------------------------------------------------------------------------------------
     # MÉTODO PRINCIPAL
     #< ------------------------------------------------------------------------------------------------------------------------------
     def exporta_dados_MDB(self):
@@ -709,7 +775,7 @@ class ExportaTabelaMDB():
             return self.exporta_dados_Windows()
         else:
             # return self.exporta_dados_Linux()
-            return self.exporta_dados_Linux_v3()
+            return self.exporta_dados_Linux_v4()
         
 #< ------------------------------------------------------------------------------------------------------------------------------
 # MAIN
