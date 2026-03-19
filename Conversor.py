@@ -320,43 +320,24 @@ class ExportaTabelaMDB():
     #< ------------------------------------------------------------------------------------------------------------------------------
     # MÉTODOS LINUX (com mdb-tools)
     #< ------------------------------------------------------------------------------------------------------------------------------
-    # def querypadrao_linux(self, row):
-    #     """ Gera valores para inserção SQL no formato do Linux """
-    #     valores = []
-    #     for valor in row:
-    #         if pd.isnull(valor):
-    #             valores.append("NULL")
-    #         elif isinstance(valor, str):
-    #             v = valor.replace("'", "''")
-    #             valores.append(f"'{v}'")
-    #         elif isinstance(valor, (datetime, pd.Timestamp)):
-    #             valores.append(f"'{valor.strftime('%Y-%m-%d %H:%M:%S')}'")
-    #         else:
-    #             valores.append(str(valor))
-    #     return ", ".join(valores)
-
     def querypadrao_linux(self, row):
-        """ Gera valores para inserção SQL no formato do Linux com DEBUG """
+        """ Gera valores para inserção SQL no formato do Linux """
         valores = []
         for i, valor in enumerate(row):
             if pd.isnull(valor):
                 valores.append("NULL")
-                print(f"  Campo {i}: NULL")
             elif isinstance(valor, str):
+                # Escapa aspas simples duplicando
                 v = valor.replace("'", "''")
                 valores.append(f"'{v}'")
-                print(f"  Campo {i}: string '{v}'")
             elif isinstance(valor, (datetime, pd.Timestamp)):
-                # Testar diferentes formatos de data
-                data_str = valor.strftime('%Y-%m-%d %H:%M:%S')
-                valores.append(f"'{data_str}'")
-                print(f"  Campo {i}: data {data_str}")
+                # Formato ISO com aspas
+                valores.append(f"'{valor.strftime('%Y-%m-%d %H:%M:%S')}'")
             elif isinstance(valor, (int, float)):
+                # Números sem aspas
                 valores.append(str(valor))
-                print(f"  Campo {i}: número {valor}")
             else:
                 valores.append(str(valor))
-                print(f"  Campo {i}: outro {valor}")
         
         return ", ".join(valores)
     
@@ -365,11 +346,16 @@ class ExportaTabelaMDB():
         """ Lê o último ID diretamente do MDB usando mdb-export """
         import subprocess
         import tempfile
+        import pandas as pd
+        import os
         
         try:
             with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False) as tmp:
                 temp_file = tmp.name
             
+            print(f"Exportando Identificadores para: {temp_file}")
+            
+            # Usa mdb-export sem opções extras
             result = subprocess.run(
                 ['mdb-export', self.path_mdb, 'Identificadores'],
                 capture_output=True, text=True, check=True
@@ -378,12 +364,18 @@ class ExportaTabelaMDB():
             with open(temp_file, 'w') as f:
                 f.write(result.stdout)
             
+            # Lê o CSV
             df_ids = pd.read_csv(temp_file)
             os.unlink(temp_file)
             
+            print(f"Colunas encontradas: {list(df_ids.columns)}")
+            
             if not df_ids.empty and 'RegistroID' in df_ids.columns:
                 idmax = df_ids['RegistroID'].max()
+                print(f"Maior RegistroID encontrado: {idmax}")
                 return int(idmax) if not pd.isna(idmax) else 0
+            
+            print("Nenhum RegistroID encontrado")
             return 0
             
         except Exception as e:
@@ -391,85 +383,59 @@ class ExportaTabelaMDB():
             return 0
     
     #< ------------------------------------------------------------------------------------------------------------------------------
-    # def executar_sql_linux(self, comandos):
-    #     """ Executa comandos SQL usando mdb-sql """
-    #     import subprocess
-        
-    #     try:
-    #         # Junta todos os comandos em um único bloco
-    #         sql_completo = "\n".join(comandos)
-            
-    #         # Executa usando mdb-sql
-    #         result = subprocess.run(
-    #             ['mdb-sql', '-p', self.path_mdb],
-    #             input=sql_completo,
-    #             capture_output=True, text=True, encoding='utf-8'
-    #         )
-            
-    #         if result.returncode != 0:
-    #             print(f"Erro ao executar SQL: {result.stderr}")
-    #             return False
-    #         return True
-            
-    #     except Exception as e:
-    #         print(f"Erro no mdb-sql: {e}")
-    #         return False
-
     def executar_sql_linux(self, comandos):
-        """ Executa comandos SQL usando mdb-sql com DEBUG """
+        """ Executa comandos SQL usando mdb-sql com a sintaxe correta """
         import subprocess
+        import tempfile
+        import os
         
         print(f"\n=== DEBUG - Executando {len(comandos)} comandos SQL ===")
-        for i, cmd in enumerate(comandos[:3]):  # Mostra só os primeiros para não poluir
-            print(f"Comando {i}: {cmd[:100]}...")
         
+        # Cria arquivo SQL temporário
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp:
+            sql_file = tmp.name
+            # Escreve todos os comandos
+            tmp.write("\n".join(comandos))
+        
+        print(f"Arquivo SQL salvo em: {sql_file}")
+        
+        # Comando correto: mdb-sql -i arquivo.sql banco.mdb
         try:
-            # Salva comandos em arquivo temporário para debug
-            with tempfile.NamedTemporaryFile(mode='w+', suffix='.sql', delete=False) as tmp:
-                debug_file = tmp.name
-                tmp.write("\n".join(comandos))
-            
-            print(f"Arquivo SQL salvo em: {debug_file}")
-            
-            # Tenta executar de diferentes formas
-            print("\nTentativa 1: mdb-sql com arquivo")
-            result1 = subprocess.run(
-                ['mdb-sql', '-p', self.path_mdb, debug_file],
+            print("\nExecutando: mdb-sql -i", sql_file, self.path_mdb)
+            result = subprocess.run(
+                ['mdb-sql', '-i', sql_file, self.path_mdb],
                 capture_output=True, text=True, encoding='utf-8'
             )
-            print(f"Return code: {result1.returncode}")
-            if result1.stderr:
-                print(f"stderr: {result1.stderr}")
             
-            # Se falhou, tenta com stdin
-            if result1.returncode != 0:
-                print("\nTentativa 2: mdb-sql com stdin")
-                sql_completo = "\n".join(comandos)
-                result2 = subprocess.run(
-                    ['mdb-sql', '-p', self.path_mdb],
-                    input=sql_completo,
+            print(f"Return code: {result.returncode}")
+            if result.stdout:
+                print(f"stdout: {result.stdout[:200]}")
+            if result.stderr:
+                print(f"stderr: {result.stderr}")
+            
+            # Se falhar, tenta sem o -i (versão antiga)
+            if result.returncode != 0:
+                print("\nTentativa alternativa: mdb-sql", self.path_mdb, "<", sql_file)
+                with open(sql_file, 'r') as f:
+                    sql_content = f.read()
+                
+                result = subprocess.run(
+                    ['mdb-sql', self.path_mdb],
+                    input=sql_content,
                     capture_output=True, text=True, encoding='utf-8'
                 )
-                print(f"Return code: {result2.returncode}")
-                if result2.stderr:
-                    print(f"stderr: {result2.stderr}")
-                if result2.stdout:
-                    print(f"stdout: {result2.stdout[:200]}")
-                
-                resultado_final = result2
-            else:
-                resultado_final = result1
+                print(f"Return code: {result.returncode}")
+                if result.stderr:
+                    print(f"stderr: {result.stderr}")
             
-            # Limpa arquivo temporário
-            os.unlink(debug_file)
-            
-            print("=== FIM DEBUG ===\n")
-            
-            return resultado_final.returncode == 0
+            return result.returncode == 0
             
         except Exception as e:
-            print(f"Erro no mdb-sql: {e}")
+            print(f"Erro ao executar mdb-sql: {e}")
             return False
+        finally:
+            # Limpa arquivo temporário
+            os.unlink(sql_file)
     
     #< ------------------------------------------------------------------------------------------------------------------------------
     def exporta_dados_Linux(self):
