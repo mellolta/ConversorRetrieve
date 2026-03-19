@@ -254,66 +254,39 @@ class ExportaTabelaMDB():
         import os
         
         if platform.system() == 'Windows':
-            # Windows: usa o driver Microsoft Access
             driver = "{Microsoft Access Driver (*.mdb, *.accdb)}"
             con_string = f"Driver={driver};DBQ={self.path_mdb};"
-            
         else:
-            # Linux: usa o caminho absoluto do driver MDBTools
-            # Lista de possíveis localizações do driver
-            possible_paths = [
-                "/usr/lib/x86_64-linux-gnu/odbc/libmdbodbc.so",
-                "/usr/lib/libmdbodbc.so",
-                "/usr/lib/x86_64-linux-gnu/libmdbodbc.so"
-            ]
+            # Linux: usa caminho absoluto do driver
+            driver_path = "/usr/lib/x86_64-linux-gnu/odbc/libmdbodbc.so"
             
-            # Encontrar o driver
-            driver_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    driver_path = path
-                    print(f"✓ Driver encontrado em: {driver_path}")
-                    break
+            # Verificar se o driver existe
+            if not os.path.exists(driver_path):
+                # Tenta alternativas
+                alternatives = [
+                    "/usr/lib/libmdbodbc.so",
+                    "/usr/lib/x86_64-linux-gnu/libmdbodbc.so"
+                ]
+                for alt in alternatives:
+                    if os.path.exists(alt):
+                        driver_path = alt
+                        break
+                else:
+                    # Se não encontrar, lista diretórios para debug
+                    print("Driver não encontrado. Verificando diretórios:")
+                    for d in ["/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu/odbc"]:
+                        if os.path.exists(d):
+                            print(f"Conteúdo de {d}:")
+                            try:
+                                print(os.listdir(d))
+                            except:
+                                pass
+                    raise Exception("Driver MDBTools não encontrado no sistema!")
             
-            if driver_path is None:
-                # Se não encontrou, tenta procurar
-                import subprocess
-                try:
-                    result = subprocess.run(['find', '/usr', '-name', '*mdbodbc*', '-type', 'f'], 
-                                        capture_output=True, text=True, timeout=5)
-                    found_files = result.stdout.strip().split('\n')
-                    for file in found_files:
-                        if file and 'mdbodbc' in file and file.endswith('.so'):
-                            driver_path = file
-                            print(f"✓ Driver encontrado via find em: {driver_path}")
-                            break
-                except:
-                    pass
-            
-            if driver_path is None:
-                raise Exception("Driver MDBTools não encontrado no sistema!")
-            
-            # Constrói a string de conexão com o caminho completo
+            print(f"Usando driver em: {driver_path}")
             con_string = f"Driver={driver_path};DBQ={self.path_mdb};"
-            
-        print(f"String de conexão: {con_string}")
         
-        try:
-            conn = pyodbc.connect(con_string)
-            print("✓ Conexão estabelecida com sucesso!")
-            return conn
-        except Exception as e:
-            print(f"✗ Erro na conexão: {e}")
-            # Tenta uma alternativa: usar o nome do driver com caminho no odbcinst.ini
-            try:
-                print("Tentando conexão com driver nomeado...")
-                con_string = f"Driver=MDBTools;DBQ={self.path_mdb};"
-                conn = pyodbc.connect(con_string)
-                print("✓ Conexão com driver nomeado bem-sucedida!")
-                return conn
-            except Exception as e2:
-                print(f"✗ Erro na conexão com driver nomeado: {e2}")
-                raise e
+        return pyodbc.connect(con_string)
 
     #< ------------------------------------------------------------------------------------------------------------------------------
     # def querypadrao(self, row, sql: str):
