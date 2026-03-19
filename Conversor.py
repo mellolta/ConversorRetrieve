@@ -249,38 +249,108 @@ class ExportaTabelaMDB():
         return pyodbc.connect(con_string)
     
     #< ------------------------------------------------------------------------------------------------------------------------------
+    # def querypadrao(self, row, sql: str):
+    #     valores_formatados = []
+    #     for valor in row:
+    #         # Prioridade 1: Tratar nulos reais (None e NaN)
+    #         if pd.isnull(valor): 
+    #             valores_formatados.append("null")
+    #         # Prioridade 2: Strings com escape de aspas
+    #         elif isinstance(valor, str):
+    #             v = valor.replace("'", " ")
+    #             valores_formatados.append(f"'{v}'")
+    #         # Prioridade 3: Datas no formato que você já validou
+    #         elif isinstance(valor, (datetime, pd.Timestamp)):
+    #             valores_formatados.append(f'#{valor.strftime("%Y-%m-%d %H:%M")}#')
+    #         else:
+    #             valores_formatados.append(str(valor))
+                
+    #     sql = sql + ", ".join(valores_formatados) + ")"
+    #     # Garantia final para qualquer "None" que tenha escapado como string
+    #     return sql.replace('None', 'null')
+
     def querypadrao(self, row, sql: str):
+        import platform
+        
         valores_formatados = []
+        
         for valor in row:
-            # Prioridade 1: Tratar nulos reais (None e NaN)
-            if pd.isnull(valor): 
-                valores_formatados.append("null")
-            # Prioridade 2: Strings com escape de aspas
+            if pd.isnull(valor):
+                # Linux (MDBTools) prefere NULL, Windows aceita null
+                if platform.system() == 'Windows':
+                    valores_formatados.append("null")
+                else:
+                    valores_formatados.append("NULL")
+                    
             elif isinstance(valor, str):
                 v = valor.replace("'", " ")
                 valores_formatados.append(f"'{v}'")
-            # Prioridade 3: Datas no formato que você já validou
+                
             elif isinstance(valor, (datetime, pd.Timestamp)):
-                valores_formatados.append(f'#{valor.strftime("%Y-%m-%d %H:%M")}#')
+                # Mantém exatamente o formato original que funcionava
+                data_str = valor.strftime("%Y-%m-%d %H:%M")
+                
+                if platform.system() == 'Windows':
+                    # Windows Access: formato com #
+                    valores_formatados.append(f'#{data_str}#')
+                else:
+                    # Linux MDBTools: pode precisar de aspas
+                    valores_formatados.append(f"'{data_str}'")
+                    
             else:
                 valores_formatados.append(str(valor))
-                
-        sql = sql + ", ".join(valores_formatados) + ")"
-        # Garantia final para qualquer "None" que tenha escapado como string
-        return sql.replace('None', 'null')
-
-    #< ------------------------------------------------------------------------------------------------------------------------------
-    def ultimoRegistro(self, cursor:pyodbc.Connection):
-        #- Buscando o valor do RegistroID
-        query = 'SELECT Max(RegistroID) AS ID FROM Identificadores;'
-        cursor.execute(query)
-        idmax = cursor.fetchall()
-        idmax = idmax[0][0]
-        cont = idmax
-        # print("Último RegistroID: ",cont) #! print
-
-        return cont
+        
+        # Para Linux, garantir NULL em maiúsculo
+        sql_final = sql + ", ".join(valores_formatados) + ")"
+        
+        if platform.system() != 'Windows':
+            sql_final = sql_final.replace('null', 'NULL')
+            sql_final = sql_final.replace('None', 'NULL')
+        
+        return sql_final
     
+    #< ------------------------------------------------------------------------------------------------------------------------------
+    # def ultimoRegistro(self, cursor:pyodbc.Connection):
+    #     #- Buscando o valor do RegistroID
+    #     query = 'SELECT Max(RegistroID) AS ID FROM Identificadores;'
+    #     cursor.execute(query)
+    #     idmax = cursor.fetchall()
+    #     idmax = idmax[0][0]
+    #     cont = idmax
+    #     # print("Último RegistroID: ",cont) #! print
+
+    #     return cont
+    
+    def ultimoRegistro(self, cursor:pyodbc.Cursor):
+        import platform
+        
+        try:
+            if platform.system() == 'Windows':
+                query = 'SELECT Max(RegistroID) AS ID FROM Identificadores;'
+            else:
+                # Linux MDBTools pode não gostar do ponto e vírgula
+                query = 'SELECT MAX(RegistroID) AS ID FROM Identificadores'
+                
+            cursor.execute(query)
+            row = cursor.fetchone()
+            
+            if row and row[0] is not None:
+                cont = row[0]
+            else:
+                cont = 0
+                
+            return cont
+            
+        except Exception as e:
+            print(f"Erro ao buscar último registro: {e}")
+            # Se falhar, tenta uma abordagem mais simples
+            try:
+                cursor.execute("SELECT COUNT(*) FROM Identificadores")
+                count = cursor.fetchone()[0]
+                return count  # Não é ideal, mas pode funcionar como fallback
+            except:
+                return 0
+            
     #< ------------------------------------------------------------------------------------------------------------------------------
     def insercao_dos_dados(self, cursor:pyodbc.Cursor, idmax:int):
         """ Criação da linha de comando SQL para a inserção dos dados no banco
